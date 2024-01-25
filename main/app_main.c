@@ -227,7 +227,9 @@ void app_main()
     esp_rmaker_device_add_param(switch_device, limit_up_param);    
     esp_rmaker_param_t *limit_down_param = esp_rmaker_intensity_param_create(RMAKER_DEF_LIMIT_DOWN_PARAM, g_pwm_servo_down_level);
     esp_rmaker_device_add_param(switch_device, limit_down_param);  
-
+    esp_rmaker_param_t *battery_param = esp_rmaker_param_create("BATTERY", NULL, esp_rmaker_float(3.7), PROP_FLAG_READ);
+    esp_rmaker_param_add_ui_type(battery_param, ESP_RMAKER_UI_TEXT);
+    esp_rmaker_device_add_param(switch_device, battery_param);
     /* Assign the power parameter as the primary, so that it can be controlled from the
      * home screen of the phone apps.
      */

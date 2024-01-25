@@ -42,15 +42,17 @@ static bool g_power_state = DEFAULT_POWER;
 
 
 #define BOARD_POWER_IO    5
-#define BOARD_LED_IO    7
+#define BOARD_LED_IO    12
+#define BOARD_LED_IO2    13
 /* This is the GPIO on which the servo power will be set */
 #define SERVO_POWER_GPIO    6
 #define DEFAULT_PWM_SERVO_STATE false
 #define DEFAULT_SERVO_POWER_STATE false
-#define SERVO_EXECUTION_TIME 110    //ms
+#define SERVO_EXECUTION_TIME 400    //ms
 static bool g_pwm_servo_state = DEFAULT_PWM_SERVO_STATE;
 int g_pwm_servo_up_level = DEFAULT_LIMIT_UP;
 int g_pwm_servo_down_level = DEFAULT_LIMIT_DOWN;
+int g_pwm_servo_mid_level = (DEFAULT_LIMIT_UP + DEFAULT_LIMIT_DOWN) / 2;
 
 static TaskHandle_t  servo_task_handle = NULL;
 
@@ -164,7 +166,9 @@ static void servo_task(void* pvParameters)
                 gpio_set_level(SERVO_POWER_GPIO, 1);
                 gpio_hold_en(SERVO_POWER_GPIO);
                 g_pwm_servo_state = app_driver_evt.event_value;
-                pwm_servo_set(g_pwm_servo_state == true? g_pwm_servo_up_level:g_pwm_servo_down_level);
+                pwm_servo_set(g_pwm_servo_state == true? g_pwm_servo_down_level:g_pwm_servo_up_level);
+                vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
+                pwm_servo_set(g_pwm_servo_mid_level);
                 vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
                 gpio_hold_dis(SERVO_POWER_GPIO);
                 gpio_set_level(SERVO_POWER_GPIO, 0);
@@ -174,9 +178,11 @@ static void servo_task(void* pvParameters)
                 esp_pm_lock_acquire(servo_task_pm_lock);
                 gpio_set_level(SERVO_POWER_GPIO, 1);
                 gpio_hold_en(SERVO_POWER_GPIO);
-                g_pwm_servo_up_level = app_driver_evt.event_value;
-                app_nvs_set_limit_value(g_pwm_servo_up_level,g_pwm_servo_down_level);
-                pwm_servo_set(g_pwm_servo_up_level);
+                g_pwm_servo_down_level = app_driver_evt.event_value;
+                app_nvs_set_limit_value(g_pwm_servo_down_level,g_pwm_servo_down_level);
+                pwm_servo_set(g_pwm_servo_down_level);
+                vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
+                pwm_servo_set(g_pwm_servo_mid_level);
                 vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
                 gpio_hold_dis(SERVO_POWER_GPIO);
                 gpio_set_level(SERVO_POWER_GPIO, 0);
@@ -186,9 +192,11 @@ static void servo_task(void* pvParameters)
                 esp_pm_lock_acquire(servo_task_pm_lock);
                 gpio_set_level(SERVO_POWER_GPIO, 1);
                 gpio_hold_en(SERVO_POWER_GPIO);
-                g_pwm_servo_down_level = app_driver_evt.event_value;
+                g_pwm_servo_up_level = app_driver_evt.event_value;
                 app_nvs_set_limit_value(g_pwm_servo_up_level,g_pwm_servo_down_level);
-                pwm_servo_set(g_pwm_servo_down_level);
+                pwm_servo_set(g_pwm_servo_up_level);
+                vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
+                pwm_servo_set(g_pwm_servo_mid_level);
                 vTaskDelay(SERVO_EXECUTION_TIME/portTICK_PERIOD_MS);
                 gpio_hold_dis(SERVO_POWER_GPIO);
                 gpio_set_level(SERVO_POWER_GPIO, 0);
@@ -231,6 +239,19 @@ static void push_btn_cb(void *arg)
     
 }
 
+static void push_battery_voltage(float battery_voltage)
+{
+    printf("Battery Voltage %f\r\n",battery_voltage);
+    esp_rmaker_param_update_and_report(
+        esp_rmaker_device_get_param_by_name(switch_device, "BATTERY"),
+        esp_rmaker_float(battery_voltage));
+    if (battery_voltage < BATTERY_WARNING_VLOT) {
+        esp_rmaker_param_update_and_notify(
+            esp_rmaker_device_get_param_by_name(switch_device, "BATTERY"),
+            esp_rmaker_float(battery_voltage));
+    }
+}
+
 static void set_power_state(bool target)
 {
     gpio_set_level(OUTPUT_GPIO, target);
@@ -256,22 +277,23 @@ static void battery_monitor_task(void* pvParameters)
         vTaskDelay(10*60*1000/portTICK_PERIOD_MS);
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, BATTERY_ADC_CHANNEL, &adc_raw));
         battery_voltage = adc_raw * 3.0f / 4095 / BATTERY_ATTEN;
+        push_battery_voltage(battery_voltage);
         //printf("Battery Voltage %f\r\n",battery_voltage);
-        if(battery_voltage < BATTERY_SHUTDOWN_VLOT ){
-            gpio_hold_dis(BOARD_POWER_IO);
-            gpio_set_level(BOARD_POWER_IO, 0);
-        }
-        else if(battery_voltage < BATTERY_WARNING_VLOT){
-            gpio_set_level(BOARD_LED_IO, 1);
-            gpio_hold_en(BOARD_LED_IO);
-            vTaskDelay(3000/portTICK_PERIOD_MS);
-            gpio_set_level(BOARD_LED_IO, 1);
-            gpio_hold_dis(BOARD_LED_IO);
-        }
-        else{
-            gpio_set_level(BOARD_POWER_IO, 1);
-            gpio_hold_en(BOARD_POWER_IO);
-        }
+        // if(battery_voltage < BATTERY_SHUTDOWN_VLOT ){
+        //     gpio_hold_dis(BOARD_POWER_IO);
+        //     gpio_set_level(BOARD_POWER_IO, 0);
+        // }
+        // else if(battery_voltage < BATTERY_WARNING_VLOT){
+        //     gpio_set_level(BOARD_LED_IO, 1);
+        //     gpio_hold_en(BOARD_LED_IO);
+        //     vTaskDelay(3000/portTICK_PERIOD_MS);
+        //     gpio_set_level(BOARD_LED_IO, 0);
+        //     gpio_hold_dis(BOARD_LED_IO);
+        // }
+        // else{
+        //     gpio_set_level(BOARD_POWER_IO, 0);
+        //     gpio_hold_en(BOARD_POWER_IO);
+        // }
     }
 }
 static void app_driver_button_long_press_callback(void* arg)
@@ -369,9 +391,15 @@ void app_driver_init()
     io_conf.pin_bit_mask = ((uint64_t)1 << BOARD_LED_IO);
     /* Configure the GPIO */
     gpio_config(&io_conf);
+
+    io_conf.pull_up_en = 0;
+    io_conf.pin_bit_mask = ((uint64_t)1 << BOARD_LED_IO2);
+    /* Configure the GPIO */
+    gpio_config(&io_conf);
     gpio_set_level(BOARD_POWER_IO, 1);
     gpio_hold_en(BOARD_POWER_IO);
-    gpio_set_level(BOARD_LED_IO, 1);
+    gpio_set_level(BOARD_LED_IO, 0);
+    gpio_set_level(BOARD_LED_IO2, 0);
     app_indicator_init();
     app_servo_init();
     xTaskCreate(battery_monitor_task, "battery_monitor_task", 2048, NULL, 12, NULL);
